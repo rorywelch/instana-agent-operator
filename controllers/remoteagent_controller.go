@@ -24,11 +24,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	instanav1 "github.com/instana/instana-agent-operator/api/v1"
 	instanaclient "github.com/instana/instana-agent-operator/pkg/k8s/client"
@@ -50,6 +54,44 @@ func AddRemote(mgr manager.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&rbacv1.ClusterRole{}).
 		Owns(&rbacv1.ClusterRoleBinding{}).
+		Watches(
+			&instanav1.InstanaAgent{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+				log := log.FromContext(ctx)
+
+				// Ensure the triggering object is namespaced
+				namespace := obj.GetNamespace()
+				if namespace == "" {
+					//agent needs to be namespaced bound. If not do no reconcile
+					return nil
+				}
+
+				var remoteAgentList instanav1.RemoteAgentList
+				if err := mgr.GetClient().List(ctx, &remoteAgentList, &client.ListOptions{
+					Namespace: namespace,
+				}); err != nil {
+					//error retrieving remote agent specs in namespace. do not trigger reconcile
+					return nil
+				}
+
+				//no remote agent specs in namespace. do not trigger reconcile
+				if len(remoteAgentList.Items) == 0 {
+					log.Info("No RemoteAgents in same namespace as InstanaAgent", "namespace", namespace)
+					return nil
+				}
+
+				var requests []reconcile.Request
+				for _, remoteAgent := range remoteAgentList.Items {
+					requests = append(requests, reconcile.Request{
+						NamespacedName: types.NamespacedName{
+							Name:      remoteAgent.Name,
+							Namespace: remoteAgent.Namespace,
+						},
+					})
+				}
+				return requests
+			}),
+		).
 		WithEventFilter(filterPredicateRemote()).
 		Complete(
 			NewRemoteAgentReconciler(
@@ -95,12 +137,14 @@ func (r *RemoteAgentReconciler) reconcile(
 	ctx = logr.NewContext(ctx, log)
 	log.Info("reconciling remote Agent CR")
 
-	hostAgent, getHostAgentRes := r.getAgent(ctx, agent.Namespace, "instana-agent")
-	if getHostAgentRes.suppliesReconcileResult() {
-		return getHostAgentRes
+	hostAgent, _ := r.getAgent(ctx, agent.Namespace, "instana-agent")
+	//if host agent exists in namespace inherit values otherwise default to minimum values to start an agent
+	if hostAgent != nil {
+		agent.DefaultWithHost(*hostAgent)
+	} else {
+		agent.Default()
 	}
 
-	agent.Default(*hostAgent)
 	operatorUtils := operator_utils.NewRemoteOperatorUtils(
 		ctx,
 		r.client,
