@@ -91,12 +91,12 @@ func TestRemoteAgent_Default(t *testing.T) {
 		expected *RemoteAgentSpec
 	}{
 		{
-			name: "defaults_from_main_agent",
+			name: "defaults_from_host_agent",
 			spec: &RemoteAgentSpec{
-				ConfigurationYaml: "config-yaml",
+				ConfigurationYaml: "remote-config-yaml",
 			},
 			expected: &RemoteAgentSpec{
-				ConfigurationYaml: "config-yaml",
+				ConfigurationYaml: "remote-config-yaml",
 				Agent: BaseAgentSpec{
 					EndpointHost: "custom-host.instana.io",
 					EndpointPort: "8443",
@@ -112,7 +112,7 @@ func TestRemoteAgent_Default(t *testing.T) {
 					KeysSecret:        "instana-keys",
 					ListenAddress:     "0.0.0.0",
 					MinReadySeconds:   10,
-					ConfigurationYaml: "config-yaml",
+					ConfigurationYaml: "remote-config-yaml",
 					AdditionalBackends: []BackendSpec{
 						{
 							EndpointHost: "backend1",
@@ -152,6 +152,60 @@ func TestRemoteAgent_Default(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "manual_config_agent",
+			spec: &RemoteAgentSpec{
+				ConfigurationYaml: "remote-config-yaml",
+				ManualSetup:       defaultTrue,
+				Zone: Name{
+					"test",
+				},
+				Agent: BaseAgentSpec{
+					EndpointHost: "custom-host.instana.io",
+					EndpointPort: "8443",
+					ExtendedImageSpec: ExtendedImageSpec{
+						ImageSpec: ImageSpec{
+							Name:       "custom/agent",
+							Tag:        "1.2.3",
+							PullPolicy: corev1.PullIfNotPresent,
+						},
+					},
+					Key:         "agent-key-123",
+					DownloadKey: "download-key",
+				},
+				Cluster: Name{
+					Name: "test-cluster",
+				},
+			},
+			expected: &RemoteAgentSpec{
+				ManualSetup:       defaultTrue,
+				ConfigurationYaml: "remote-config-yaml",
+				Zone: Name{
+					"test",
+				},
+				Agent: BaseAgentSpec{
+					EndpointHost: "custom-host.instana.io",
+					EndpointPort: "8443",
+					ExtendedImageSpec: ExtendedImageSpec{
+						ImageSpec: ImageSpec{
+							Name:       "custom/agent",
+							Tag:        "1.2.3",
+							PullPolicy: corev1.PullIfNotPresent,
+						},
+					},
+					Key:               "agent-key-123",
+					DownloadKey:       "download-key",
+					ConfigurationYaml: "remote-config-yaml",
+				},
+				Cluster: Name{
+					Name: "test-cluster",
+				},
+				Rbac: Create{Create: defaultTrue},
+				ServiceAccountSpec: ServiceAccountSpec{
+					Create: Create{Create: defaultTrue},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -160,13 +214,13 @@ func TestRemoteAgent_Default(t *testing.T) {
 
 			ra := &RemoteAgent{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-remote-agent",
+					Name:      "instana-agent-remote",
 					Namespace: "default",
 				},
 				Spec: *tt.spec,
 			}
 
-			ra.DefaultWithHost(mainAgent)
+			ra.Default(mainAgent)
 
 			assertions.Equal(tt.expected, &ra.Spec)
 		})
